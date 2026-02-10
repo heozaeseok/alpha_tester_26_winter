@@ -8,140 +8,205 @@ from minigrid.minigrid_env import MiniGridEnv
 import pandas as pd
 import random
 
-# --- Custom Objects ---
+# --- 1. 객체 정의 ---
 class HealthyTree(Box):
     def __init__(self, tree_type=1):
-        # 수종에 따른 색상 매핑
-        colors = {1: 'green', 2: 'yellow', 3: 'purple', 4: 'blue'}
+        colors = {1: 'red', 2: 'green', 3: 'yellow', 4: 'grey'}
         super().__init__(color=colors.get(tree_type, 'green'))
         self.tree_type = tree_type
     def can_overlap(self): return True
 
 class BurningTree(Ball):
-    def __init__(self): super().__init__(color='red')
-    def can_overlap(self): return True
-
-class BurntTree(Box):
-    def __init__(self): super().__init__(color='grey')
+    def __init__(self, spread_prob=0.01): 
+        super().__init__(color='red')
+        self.spread_prob = spread_prob
     def can_overlap(self): return True
 
 class ExtinguishedTree(Box):
     def __init__(self): super().__init__(color='blue')
     def can_overlap(self): return True
 
-# --- Environment ---
-class ForestFireEnv(MiniGridEnv):
-    def __init__(self, render_mode=None, base_fire_prob=0.01, burn_out_prob=0.05):
-        # CSV 데이터 로드 및 격자 크기 설정
-        self.df = pd.read_csv('SubongSan_Grid_ver2.csv')
-        self.grid_w = self.df['col_index'].max() + 3 
-        self.grid_h = self.df['row_index'].max() + 3
-        
-        # 데이터 룩업 딕셔너리 생성
-        self.grid_info = {}
-        for _, row in self.df.iterrows():
-            self.grid_info[(int(row['col_index'])+1, int(row['row_index'])+1)] = {
-                'is_tree': int(row['is_tree']),
-                'elevation': float(row['elevation']),
-                'slope': float(row['slope']),
-                'aspect': float(row['aspect']),
-                'tree_type': int(row['tree_type'])
-            }
+class BurntTree(Box):
+    def __init__(self): super().__init__(color='grey')
+    def can_overlap(self): return True
 
-        self.base_fire_prob = base_fire_prob
-        self.burn_out_prob = burn_out_prob
+# --- 2. 환경 클래스 ---
+class ForestFireEnv(MiniGridEnv):
+    def __init__(self, render_mode=None):
+        self.csv_path = r"C:\Users\USER\Desktop\forest_fire\SubongSan_Grid_ver2.csv"
+        self.df = pd.read_csv(self.csv_path)
         
-        mission_space = MissionSpace(mission_func=lambda: "Extinguish the forest fire")
+        # 실제 데이터의 가로, 세로 크기 계산
+        self.grid_w = self.df['col_index'].max() + 1
+        self.grid_h = self.df['row_index'].max() + 1
+        
+        self.base_spread_prob = 0.01
+        self.burn_out_prob = 0.001
+        self.tree_weights = {1: 1.5, 3: 1.25, 4: 1.1, 2: 1.0, 0: 0.0}
+        
+        mission_space = MissionSpace(mission_func=lambda: "extinguish all fires")
+
+        # 정사각형 강제가 아닌, 데이터 크기에 맞춘 직사각형 그리드 설정
         super().__init__(
             mission_space=mission_space,
-            grid_size=None,
-            width=self.grid_w,
-            height=self.grid_h,
-            max_steps=500,
+            width=self.grid_w + 2,   # 가로 크기 + 벽 공간
+            height=self.grid_h + 2,  # 세로 크기 + 벽 공간
+            max_steps=2000,
             render_mode=render_mode
         )
-        self.action_space = spaces.Discrete(5) # 0:L, 1:R, 2:F, 3:Pickup, 4:Extinguish
-        self.observation_space = spaces.Box(low=-1, high=1, shape=(5,), dtype=np.float32)
+        
+        self.observation_space = spaces.Box(low=-1000, high=1000, shape=(9,), dtype=np.float32)
+        self.action_space = spaces.Discrete(4)
 
     def _gen_grid(self, width, height):
+        # 1. 전달받은 width, height를 사용하여 그리드 생성
         self.grid = Grid(width, height)
+        
+        # 2. 실제 데이터 범위에 맞춰 벽 생성 (0부터 width, height까지)
         self.grid.wall_rect(0, 0, width, height)
 
-        tree_positions = []
-        for (x, y), info in self.grid_info.items():
-            if info['is_tree'] == 1:
-                self.grid.set(x, y, HealthyTree(tree_type=info['tree_type']))
-                tree_positions.append((x, y))
+        # 3. 나무 배치 (기존 로직 유지)
+        self.tree_cells = []
+        for _, row in self.df.iterrows():
+            tx, ty = int(row['col_index']) + 1, int(row['row_index']) + 1
+            if row['is_tree'] == 1:
+                self.grid.set(tx, ty, HealthyTree(tree_type=row['tree_type']))
+                self.tree_cells.append((tx, ty))
         
-        if tree_positions:
-            fx, fy = random.choice(tree_positions)
-            self.grid.set(fx, fy, BurningTree())
-
-        # 에이전트 초기 위치 (나무가 없는 곳)
-        empty_pos = [(x, y) for x in range(1, width-1) for y in range(1, height-1) 
-                     if self.grid.get(x, y) is None]
-        self.agent_pos = random.choice(empty_pos) if empty_pos else (1, 1)
+        self.initial_tree_count = len(self.tree_cells)
+        self.agent_pos = (1, 1)
         self.agent_dir = 0
 
-    def step(self, action):
-        if action < 3:
-            super().step(action)
-        elif action == 4: # 소화 액션
-            fwd_pos = self.front_pos
-            cell = self.grid.get(*fwd_pos)
-            if isinstance(cell, BurningTree):
-                self.grid.set(*fwd_pos, ExtinguishedTree())
-
-        self._spread_fire()
-        return self._get_obs(), 0, False, self.step_count >= self.max_steps, {}
-
-    def _spread_fire(self):
-        fires = self._get_fire_positions()
-        new_fires = []
+    def get_realtime_prob(self, x, y):
+        # CSV 데이터 추출 (좌표 보정)
+        row = self.df[(self.df['col_index'] == x-1) & (self.df['row_index'] == y-1)].iloc[0]
         
-        for fx, fy in fires:
-            for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
-                nx, ny = fx + dx, fy + dy
-                cell = self.grid.get(nx, ny)
-                
-                if isinstance(cell, HealthyTree):
-                    info_src = self.grid_info.get((fx, fy), {})
-                    info_dst = self.grid_info.get((nx, ny), {})
-                    p = self.base_fire_prob
-                    
-                    # 물리 법칙 1: 경사도(Slope) - 오르막 방향 확산 가중
-                    if info_dst.get('elevation', 0) > info_src.get('elevation', 0):
-                        p *= np.exp(0.069 * info_dst.get('slope', 0))
-                    
-                    # 물리 법칙 2: 수목 종류 - 침엽수(1.5), 활엽수(0.7)
-                    t_weight = {1: 1.5, 2: 0.7, 3: 1.0, 4: 1.0}.get(info_dst.get('tree_type', 0), 1.0)
-                    p *= t_weight
-                    
-                    # 물리 법칙 3: 사면 방향 - 남향(180도) 건조 가중치
-                    aspect = info_dst.get('aspect', 0)
-                    p *= (1.0 + 0.2 * np.cos(np.radians(aspect - 180)))
-                    
-                    if random.random() < p:
-                        new_fires.append((nx, ny))
+        # 1. 수목 가중치
+        w_tree = self.tree_weights.get(row['tree_type'], 1.0)
+        # 2. 경사도 가중치
+        slope = row['slope']
+        w_slope = 1.0 if slope < 5 else (1.5 if slope < 15 else 2.0)
+        # 3. 바람 및 사면 가중치
+        aspect = row['aspect']
+        diff = abs(aspect - self.target_aspect)
+        if diff > 180: diff = 360 - diff
+        w_aspect = 1.5 if diff < 45 else (1.2 if diff < 90 else 1.0)
+        
+        prob = self.base_spread_prob * w_tree * w_slope * w_aspect
+        return min(prob, 0.05) # 최대 0.05 제한
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        
+        # 바람 설정 (0:북, 1:동, 2:남, 3:서 - 바람이 불어가는 방향 기준)
+        self.wind_idx = self.np_random.integers(0, 4)
+        wind_cfg = {
+            0: {"vec": [0, 1], "target": 180}, # 북풍 -> 남쪽(180) 사면 위험
+            1: {"vec": [-1, 0], "target": 270},
+            2: {"vec": [0, -1], "target": 0},
+            3: {"vec": [1, 0], "target": 90}
+        }
+        self.wind_vec = wind_cfg[self.wind_idx]["vec"]
+        self.target_aspect = wind_cfg[self.wind_idx]["target"]
+
+        # 초기 화재 발생 (5곳)
+        fire_nodes = self.np_random.choice(len(self.tree_cells), 5, replace=False)
+        for idx in fire_nodes:
+            fx, fy = self.tree_cells[idx]
+            p = self.get_realtime_prob(fx, fy)
+            self.grid.set(fx, fy, BurningTree(spread_prob=p))
+
+        # 에이전트 랜덤 배치 및 상태 초기화
+        self.agent_pos = self.place_agent()
+        self.ammo = 3
+        return self._get_obs(), {}
+
+    def step(self, action):
+        self.step_count += 1
+        reward = -0.01 # Time Penalty
+        
+        # 1. 에이전트 이동 (0:우, 1:하, 2:좌, 3:상)
+        moves = {0: [1, 0], 1: [0, 1], 2: [-1, 0], 3: [0, -1]}
+        dm = moves[action]
+        next_p = (max(1, min(self.grid_w, self.agent_pos[0] + dm[0])),
+                  max(1, min(self.grid_h, self.agent_pos[1] + dm[1])))
+        self.agent_pos = next_p
+
+        # 2. 화재 진압 판정
+        curr_obj = self.grid.get(*self.agent_pos)
+        if isinstance(curr_obj, BurningTree):
+            reward += 2.0 + (20 * curr_obj.spread_prob)
+            self.grid.set(*self.agent_pos, ExtinguishedTree())
+            self.ammo -= 1
             
+            # 소화탄 소진 시 에이전트 교체 (새로운 랜덤 위치)
+            if self.ammo <= 0:
+                self.agent_pos = self.place_agent()
+                self.ammo = 3
+
+        # 3. 화재 확산 로직
+        fire_list = [(x, y) for x in range(1, self.grid_w+1) for y in range(1, self.grid_h+1) 
+                     if isinstance(self.grid.get(x, y), BurningTree)]
+        
+        spread_count = 0
+        for fx, fy in fire_list:
+            # 4방향 확산
+            for dx, dy in [[0,1],[0,-1],[1,0],[-1,0]]:
+                nx, ny = fx+dx, fy+dy
+                neighbor = self.grid.get(nx, ny)
+                if isinstance(neighbor, HealthyTree):
+                    p = self.get_realtime_prob(nx, ny)
+                    if random.random() < p:
+                        self.grid.set(nx, ny, BurningTree(spread_prob=p))
+                        spread_count += 1
+            # 전소 판정
             if random.random() < self.burn_out_prob:
                 self.grid.set(fx, fy, BurntTree())
 
-        for nx, ny in new_fires:
-            self.grid.set(nx, ny, BurningTree())
+        reward -= (spread_count * 1.0)
 
-    def _get_fire_positions(self):
-        return [(x, y) for x in range(self.grid_w) for y in range(self.grid_h) 
-                if isinstance(self.grid.get(x, y), BurningTree)]
+        # 4. 종료 조건 및 추가 보상
+        current_fires = [(x, y) for x in range(1, self.grid_w+1) for y in range(1, self.grid_h+1) 
+                         if isinstance(self.grid.get(x, y), BurningTree)]
+        burnt_count = sum(1 for x in range(1, self.grid_w+1) for y in range(1, self.grid_h+1) 
+                          if isinstance(self.grid.get(x, y), (BurntTree, BurningTree)))
+        
+        terminated = False
+        truncated = False
+        
+        if not current_fires: # 성공
+            terminated = True
+            alive_trees = self.initial_tree_count - burnt_count
+            reward += alive_trees * 5.0
+        elif burnt_count >= self.initial_tree_count * 0.5: # 실패
+            terminated = True
+            reward -= 100.0
+
+        return self._get_obs(), reward, terminated, truncated, {}
 
     def _get_obs(self):
-        fires = self._get_fire_positions()
-        dist_to_fire, rel_fire_pos = 1.0, np.array([0.0, 0.0])
-        if fires:
-            dists = [np.linalg.norm(np.array(self.agent_pos) - np.array(f)) for f in fires]
-            closest_fire = fires[np.argmin(dists)]
-            dist_to_fire = min(dists) / max(self.grid_w, self.grid_h)
-            rel_fire_pos = (np.array(closest_fire) - np.array(self.agent_pos)) / max(self.grid_w, self.grid_h)
+        ax, ay = self.agent_pos
+        wx, wy = self.wind_vec
         
-        return np.array([self.agent_pos[0]/self.grid_w, self.agent_pos[1]/self.grid_h, 
-                         rel_fire_pos[0], rel_fire_pos[1], dist_to_fire], dtype=np.float32)
+        fires = [(x, y, obj.spread_prob) for x in range(1, self.grid_w+1) for y in range(1, self.grid_h+1) 
+                 if isinstance((obj := self.grid.get(x, y)), BurningTree)]
+        
+        if not fires:
+            return np.zeros(9, dtype=np.float32)
+
+        # 1. 가장 가까운 화재셀 거리
+        dists = [((x-ax)**2 + (y-ay)**2, x, y) for x, y, p in fires]
+        closest = min(dists)
+        
+        # 2. 확산 확률이 가장 높은(위험한) 화재셀 거리
+        riskiest = max(fires, key=lambda x: x[2])
+        
+        obs = np.array([
+            ax, ay,           # 에이전트 위치
+            wx, wy,           # 바람 벡터
+            self.ammo,        # 소화탄 잔량
+            closest[1] - ax, closest[2] - ay, # 최단거리 화재 (상대좌표)
+            riskiest[0] - ax, riskiest[1] - ay  # 최고위험 화재 (상대좌표)
+        ], dtype=np.float32)
+        
+        return obs

@@ -1,116 +1,40 @@
 import gymnasium as gym
-from minigrid.core.grid import Grid
-from minigrid.core.mission import MissionSpace
-from minigrid.core.world_object import Box, Ball, Key
-from minigrid.minigrid_env import MiniGridEnv
-import pandas as pd
-import numpy as np
 import time
-import random
-import os
+# 위에서 정의한 환경 클래스가 포함된 파일명이 minigrid_forest_env.py라고 가정합니다.
+from minigrid_forest_env import ForestFireEnv 
 
-# --- Custom Objects ---
-class HealthyTree(Box):
-    def __init__(self): super().__init__(color='green')
-    def can_overlap(self): return True 
-
-class BurningTree(Ball):
-    def __init__(self): super().__init__(color='red')
-    def can_overlap(self): return True
-
-class WaterTank(Key):
-    def __init__(self): super().__init__(color='blue')
-    def can_overlap(self): return True 
-
-class Stone(Box):
-    def __init__(self): 
-        super().__init__(color='purple')
-    def can_overlap(self): 
-        return True 
-
-# --- Visualization Environment ---
-class ForestFireMapViewer(MiniGridEnv):
-    def __init__(self, render_mode="human"):
-        self.csv_path = r"C:\Users\USER\Desktop\forest_fire\grid_analysis.csv"
-        
-        if not os.path.exists(self.csv_path):
-            print(f"Error: 파일을 찾을 수 없습니다: {self.csv_path}")
-            return
-
-        self.df = pd.read_csv(self.csv_path)
-        self.max_row = int(self.df['row_index'].max()) + 1
-        self.max_col = int(self.df['col_index'].max()) + 1
-        
-        self.grid_w = self.max_col + 2
-        self.grid_h = self.max_row + 2
-
-        self.tank_pos = (1, 1)
-        self.fixed_tree_coords = []
-        self.fixed_stone_coords = []
-        
-        self._load_from_csv()
-
-        mission_space = MissionSpace(mission_func=lambda: "Map Visualization Mode")
-        
-        super().__init__(
-            mission_space=mission_space,
-            width=self.grid_w,
-            height=self.grid_h,
-            max_steps=100,
-            render_mode=render_mode,
-            see_through_walls=True
-        )
-        self.highlight = False 
-
-    def _load_from_csv(self):
-        grid_data = {(int(row['row_index']), int(row['col_index'])): int(row['is_tree']) 
-                     for _, row in self.df.iterrows()}
-        
-        for (r, c), is_tree in grid_data.items():
-            tx, ty = c + 1, r + 1
-            if (tx, ty) == self.tank_pos: continue
-
-            if is_tree == 1:
-                self.fixed_tree_coords.append((tx, ty))
-            else:
-                surround = [
-                    grid_data.get((r-1, c), 0),
-                    grid_data.get((r+1, c), 0),
-                    grid_data.get((r, c-1), 0),
-                    grid_data.get((r, c+1), 0)
-                ]
-                if sum(surround) == 4:
-                    self.fixed_stone_coords.append((tx, ty))
-
-    def _gen_grid(self, width, height):
-        self.grid = Grid(width, height)
-        self.grid.wall_rect(0, 0, width, height)
-        self.put_obj(WaterTank(), *self.tank_pos)
-        
-        for (sx, sy) in self.fixed_stone_coords:
-            if 0 < sx < width and 0 < sy < height:
-                self.grid.set(sx, sy, Stone())
-
-        self.trees = []
-        for (tx, ty) in self.fixed_tree_coords:
-            if 0 < tx < width and 0 < ty < height:
-                self.grid.set(tx, ty, HealthyTree())
-                self.trees.append((tx, ty))
-
-        if hasattr(self, 'trees') and len(self.trees) >= 5:
-            fire_indices = random.sample(range(len(self.trees)), 5)
-            for idx in fire_indices:
-                fx, fy = self.trees[idx]
-                self.grid.set(fx, fy, BurningTree())
-
-        self.agent_pos = self.tank_pos
-        self.agent_dir = 0
+def visualize_env():
+    # 1. 환경 생성 (render_mode를 human으로 설정하여 창을 띄웁니다)
+    env = ForestFireEnv(render_mode="human")
+    
+    # 2. 환경 초기화
+    # reset 시 내부적으로 CSV를 읽고 tree_type에 맞는 HealthyTree를 배치합니다.
+    obs, info = env.reset()
+    
+    print("환경 시각화를 시작합니다. (창을 닫으려면 터미널에서 Ctrl+C)")
+    
+    try:
+        for step in range(1000):
+            # 3. 랜덤 액션 샘플링 (0:우, 1:하, 2:좌, 3:상)
+            action = env.action_space.sample()
+            
+            # 4. Step 진행
+            obs, reward, terminated, truncated, info = env.step(action)
+            
+            # 5. 렌더링 (human 모드이므로 자동으로 창이 업데이트됩니다)
+            env.render()
+            
+            # 시각화를 관찰하기 위한 짧은 대기
+            time.sleep(0.1)
+            
+            if terminated or truncated:
+                print(f"에피소드 종료. 최종 보상: {reward}")
+                break
+                
+    except KeyboardInterrupt:
+        print("사용자에 의해 종료되었습니다.")
+    finally:
+        env.close()
 
 if __name__ == "__main__":
-    env = ForestFireMapViewer(render_mode="human")
-    if hasattr(env, 'width'):
-        env.reset()
-        env.render()
-        print(f"Map Rendered: {env.width}x{env.height}")
-        time.sleep(10)
-        env.close()
+    visualize_env()
