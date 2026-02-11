@@ -30,13 +30,11 @@ class BurntTree(Box):
     def __init__(self): super().__init__(color='grey')
     def can_overlap(self): return True
 
-# --- 2. 환경 클래스 ---
 class ForestFireEnv(MiniGridEnv):
     def __init__(self, render_mode=None):
-        self.csv_path = r"C:\Users\USER\Desktop\forest_fire\SubongSan_Grid_ver2.csv"
+        self.csv_path = r"C:\Users\USER\Desktop\forest_fire\subongsan_integrated_final.csv"
         self.df = pd.read_csv(self.csv_path)
         
-        # 실제 데이터의 가로, 세로 크기 계산
         self.grid_w = self.df['col_index'].max() + 1
         self.grid_h = self.df['row_index'].max() + 1
         
@@ -46,13 +44,14 @@ class ForestFireEnv(MiniGridEnv):
         
         mission_space = MissionSpace(mission_func=lambda: "extinguish all fires")
 
-        # 정사각형 강제가 아닌, 데이터 크기에 맞춘 직사각형 그리드 설정
         super().__init__(
             mission_space=mission_space,
-            width=self.grid_w + 2,   # 가로 크기 + 벽 공간
-            height=self.grid_h + 2,  # 세로 크기 + 벽 공간
+            width=self.grid_w + 2,
+            height=self.grid_h + 2,
             max_steps=2000,
-            render_mode=render_mode
+            render_mode=render_mode,
+            see_through_walls=True, 
+            agent_view_size=101      # 홀수로 수정 (반드시 3, 5, 7... 중 하나)
         )
         
         self.observation_space = spaces.Box(low=-1000, high=1000, shape=(9,), dtype=np.float32)
