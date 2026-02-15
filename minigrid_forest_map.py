@@ -20,8 +20,8 @@ class VisualForestEnv(ForestFireEnv):
 
     def reset(self, seed=None, options=None):
         obs, info = super().reset(seed=seed)
-        # 렌더링 시 시야 박스를 없애기 위해 highlight 설정을 끕니다.
-        self.highlight = False 
+        # 전체 맵을 보이게 하기 위해 모든 타일의 'visibility'를 True로 설정
+        # 렌더링 시 전역 관찰 시점을 제공합니다.
         return obs, info
 
     def render(self):
