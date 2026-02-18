@@ -33,10 +33,10 @@ class BurntTree(Box):
 class ForestFireEnv(MiniGridEnv):
     def __init__(self, render_mode=None):
         # CSV 경로는 사용자 환경에 맞춰 유지
-        self.csv_path = r"C:\Users\USER\Desktop\forest_fire\subongsan_integrated_final.csv"
+        self.csv_path = r"/home/cvrp/heojaeseok/GOPT_cvrp/ps/subongsan_integrated_final.csv"
         self.df = pd.read_csv(self.csv_path)
         
-        self.grid_w = self.df['col_index'].max() + 1
+        self.grid_w = self.df['col_index'].max() + 1    
         self.grid_h = self.df['row_index'].max() + 1
         
         self.base_spread_prob = 0.01
@@ -94,7 +94,7 @@ class ForestFireEnv(MiniGridEnv):
         if diff > 180: diff = 360 - diff
         w_aspect = 1.5 if diff < 45 else (1.2 if diff < 90 else 1.0)
         
-        return min(self.base_spread_prob * w_tree * w_slope * w_aspect, 0.05)
+        return min(self.base_spread_prob * w_tree * w_slope * w_aspect, 0.1)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -111,7 +111,7 @@ class ForestFireEnv(MiniGridEnv):
         self.wind_vec = wind_cfg[self.wind_idx]["vec"]
         self.target_aspect = wind_cfg[self.wind_idx]["target"]
 
-        fire_nodes = self.np_random.choice(len(self.tree_cells), 5, replace=False)
+        fire_nodes = self.np_random.choice(len(self.tree_cells), 4, replace=False)
         for idx in fire_nodes:
             fx, fy = self.tree_cells[idx]
             p = self.get_realtime_prob(fx, fy)
@@ -119,7 +119,7 @@ class ForestFireEnv(MiniGridEnv):
             self.fire_coords.add((fx, fy))
 
         self.agent_pos = self.place_agent()
-        self.ammo = 5  # 소화탄 5개로 수정
+        self.ammo = 3  # 소화탄 5개로 수정
         return self._get_obs(), {}
 
     def step(self, action):
@@ -135,13 +135,13 @@ class ForestFireEnv(MiniGridEnv):
         # 2. 화재 진압 판정
         curr_obj = self.grid.get(*self.agent_pos)
         if isinstance(curr_obj, BurningTree):
-            reward += 2.0 + (20 * curr_obj.spread_prob)
+            reward += 5.0 + (30 * curr_obj.spread_prob)
             self.grid.set(*self.agent_pos, ExtinguishedTree())
             self.fire_coords.discard(self.agent_pos)
             self.ammo -= 1
             if self.ammo <= 0:
                 self.agent_pos = self.place_agent()
-                self.ammo = 5 # 리스폰 시 다시 5개
+                self.ammo = 3 # 리스폰 시 다시 5개
 
         # 3. 화재 확산 로직
         spread_count = 0
@@ -169,14 +169,14 @@ class ForestFireEnv(MiniGridEnv):
         for nf in new_fires: self.fire_coords.add(nf)
         for ef in extinguished_fires: self.fire_coords.remove(ef)
 
-        reward -= (spread_count * 1.0)
+        reward -= (spread_count * 0.5)
 
         # 4. 종료 조건
         terminated = False
         if not self.fire_coords:
             terminated = True
             reward += (self.initial_tree_count - len(self.burnt_coords)) * 5.0
-        elif len(self.burnt_coords) + len(self.fire_coords) >= self.initial_tree_count * 0.5:
+        elif len(self.burnt_coords) + len(self.fire_coords) >= self.initial_tree_count * 0.75:
             terminated = True
             reward -= 100.0
 

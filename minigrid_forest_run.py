@@ -25,8 +25,9 @@ LOG_DIR = os.path.join(BASE_PATH, "logs")
 NUM_ENVS = 8  # 본인의 CPU 코어 수에 맞춰 조절하세요 (예: 4, 8, 16)
 # --------------------------
 
-TOTAL_TIMESTEPS = 10_000_000 
+TOTAL_TIMESTEPS = 5_000_000
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+#DEVICE = "cpu"
 
 def make_env(rank, seed=0):
     """
