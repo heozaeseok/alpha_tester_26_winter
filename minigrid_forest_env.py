@@ -31,34 +31,36 @@ class BurntTree(Box):
     def can_overlap(self): return True
 
 class ForestFireEnv(MiniGridEnv):
-    def __init__(self, render_mode=None):
-        # CSV 경로는 사용자 환경에 맞춰 유지
-        self.csv_path = r"/home/cvrp/heojaeseok/GOPT_cvrp/ps/subongsan_integrated_final.csv"
-        self.df = pd.read_csv(self.csv_path)
+    def __init__(self, render_mode="human"):
+        self.grid_w = 50
+        self.grid_h = 50
         
-        self.grid_w = self.df['col_index'].max() + 1    
-        self.grid_h = self.df['row_index'].max() + 1
-        
-        self.base_spread_prob = 0.01
-        self.burn_out_prob = 0.001
-        self.tree_weights = {1: 1.5, 3: 1.25, 4: 1.1, 2: 1.0, 0: 0.0}
-        
-        # 최적화를 위한 좌표 추적 집합
-        self.fire_coords = set() 
-        self.burnt_coords = set()
+        # --- [난이도 조절] 파라미터 수정 ---
+        self.base_spread_prob = 0.05  # 기본 확산 확률 대폭 감소 (기존 0.2)
+        self.wind_strength = 0.8     # 바람 영향력 강화 (바람 방향으로 확산 뚜렷함)
+        self.num_initial_fires = 2   # 초기 화재 발생 지점 2개로 고정
+        # -------------------------------
+
+        self.csv_path = "subongsan_integrated_final.csv"
+        try:
+            self.df = pd.read_csv(self.csv_path)
+            # 학습 단순화를 위해 경사도(slope)의 영향을 0으로 처리하거나 대폭 축소
+            self.df['slope'] = self.df['slope'] * 0.1 
+        except:
+            self.df = None
 
         mission_space = MissionSpace(mission_func=lambda: "extinguish all fires")
-
+        
         super().__init__(
             mission_space=mission_space,
             width=self.grid_w + 2,
             height=self.grid_h + 2,
-            max_steps=2000,
+            max_steps=1000,
             render_mode=render_mode,
-            see_through_walls=True, 
-            agent_view_size=101
+            see_through_walls=True,
+            agent_view_size=201 # 시야 하얀 박스 제거를 위해 크게 설정
         )
-        
+        self.highlight = False
         # 관측치 차원 수정: 9 -> 11 (바람 정렬도, 현재지점 확산가중치 추가)
         self.observation_space = spaces.Box(low=-1000, high=1000, shape=(11,), dtype=np.float32)
         self.action_space = spaces.Discrete(4)
@@ -98,28 +100,23 @@ class ForestFireEnv(MiniGridEnv):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.fire_coords.clear()
-        self.burnt_coords.clear()
-        
-        self.wind_idx = self.np_random.integers(0, 4)
-        wind_cfg = {
-            0: {"vec": [0, 1], "target": 180},
-            1: {"vec": [-1, 0], "target": 270},
-            2: {"vec": [0, -1], "target": 0},
-            3: {"vec": [1, 0], "target": 90}
-        }
-        self.wind_vec = wind_cfg[self.wind_idx]["vec"]
-        self.target_aspect = wind_cfg[self.wind_idx]["target"]
+        self.grid = Grid(self.grid_w + 2, self.grid_h + 2)
+        self.grid.wall_rect(0, 0, self.grid_w + 2, self.grid_h + 2)
 
-        fire_nodes = self.np_random.choice(len(self.tree_cells), 4, replace=False)
-        for idx in fire_nodes:
-            fx, fy = self.tree_cells[idx]
-            p = self.get_realtime_prob(fx, fy)
-            self.grid.set(fx, fy, BurningTree(spread_prob=p))
+        # 바람 방향 설정 (학습 확인을 위해 8방향 중 하나 무작위)
+        self.wind_dir = random.choice(['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW'])
+        
+        self.fire_coords = set()
+        self.agent_pos = (self.grid_w // 2, self.grid_h // 2)
+        self.grid.set(self.agent_pos[0], self.agent_pos[1], Floor('blue'))
+
+        # --- [변경] 초기 화재 2개 지점 설정 ---
+        potential_coords = [(x, y) for x in range(5, self.grid_w-5) for y in range(5, self.grid_h-5)]
+        start_fires = random.sample(potential_coords, self.num_initial_fires)
+        for fx, fy in start_fires:
+            self.grid.set(fx, fy, Goal()) # Goal을 불(빨간색)로 활용
             self.fire_coords.add((fx, fy))
 
-        self.agent_pos = self.place_agent()
-        self.ammo = 3  # 소화탄 5개로 수정
         return self._get_obs(), {}
 
     def step(self, action):
@@ -221,3 +218,32 @@ class ForestFireEnv(MiniGridEnv):
         ], dtype=np.float32)
         
         return obs
+    
+    def _spread_fire(self):
+        new_fires = set()
+        moves = [(-1,0), (1,0), (0,-1), (0,1)]
+        
+        # 바람 방향에 따른 가중치 부여
+        wind_offsets = {
+            'N': (0,-1), 'S': (0,1), 'E': (1,0), 'W': (-1,0),
+            'NE': (1,-1), 'NW': (-1,-1), 'SE': (1,1), 'SW': (-1,1)
+        }
+        dx_w, dy_w = wind_offsets[self.wind_dir]
+
+        for fx, fy in list(self.fire_coords):
+            for dx, dy in moves:
+                nx, ny = fx + dx, fy + dy
+                if 1 <= nx <= self.grid_w and 1 <= ny <= self.grid_h:
+                    if self.grid.get(nx, ny) is None or isinstance(self.grid.get(nx, ny), Floor):
+                        # 바람 방향과 일치할 경우 확률 대폭 증가
+                        dot_product = dx * dx_w + dy * dy_w
+                        prob = self.base_spread_prob
+                        if dot_product > 0:
+                            prob += self.wind_strength
+                        
+                        if random.random() < prob:
+                            new_fires.add((nx, ny))
+                            
+        for nx, ny in new_fires:
+            self.grid.set(nx, ny, Goal())
+            self.fire_coords.add((nx, ny))

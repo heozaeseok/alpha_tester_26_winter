@@ -1,64 +1,68 @@
 import gymnasium as gym
 from stable_baselines3 import PPO
+from gymnasium.envs.registration import register
+import minigrid_forest_env
 import time
 import os
-import minigrid_forest_env # 환경 등록 필수
+import numpy as np
 
-# ==========================================
-# [설정] 경로 및 파라미터
-# ==========================================
-BASE_PATH = r"C:\Users\CIL\Desktop\minigird_forest"
-MODEL_PATH = os.path.join(BASE_PATH, "learned_model", "ppo_forest_fire_v22_ver4") # .zip 제외하고 경로 지정
+# 1. 환경 등록 (절대 생략하면 안 됩니다)
+try:
+    register(
+        id="ForestFireMLP-v22",
+        entry_point="minigrid_forest_env:ForestFireEnv",
+    )
+except:
+    # 이미 등록된 경우 에러 방지
+    pass
 
-# 학습 때와 동일한 환경 설정 권장
+def test_forest_fire(model_path, num_episodes=5):
+    # 2. 환경 생성 (agent_view_size를 맵 전체를 덮을 만큼 크게 설정)
+    env = gym.make("ForestFireMLP-v22", render_mode="human")
+    
+    # [핵심] 하얀 박스(하이라이트) 기능을 끕니다.
+    env.unwrapped.highlight = False 
 
-# ==========================================
-# [메인] 테스트 실행
-# ==========================================
+    # 3. 모델 로드
+    if not os.path.exists(model_path):
+        print(f"모델 파일을 찾을 수 없습니다: {model_path}")
+        return
+        
+    model = PPO.load(model_path)
+    print("모델 로드 완료.")
+
+    for episode in range(num_episodes):
+        obs, info = env.reset()
+        terminated = False
+        truncated = False
+        step = 0
+
+        print(f"--- 에피소드 {episode + 1} 시작 ---")
+
+        while not (terminated or truncated):
+            # 하얀 박스 제거 상태 유지
+            env.unwrapped.highlight = False 
+            
+            # 행동 예측
+            action, _states = model.predict(obs, deterministic=True)
+            if isinstance(action, np.ndarray): 
+                action = action.item()
+            
+            # 한 스텝 진행
+            obs, reward, terminated, truncated, info = env.step(action)
+            
+            step += 1
+            # 렌더링 속도 (0.001초 대기)
+            time.sleep(0.001) 
+            env.render()
+
+        print(f"에피소드 종료 | 총 스텝: {step}")
+        time.sleep(1)
+
+    env.close()
+
 if __name__ == "__main__":
-    # 1. 모델 파일 존재 확인
-    if not os.path.exists(MODEL_PATH + ".zip"):
-        print(f"[Error] Model file not found at: {MODEL_PATH}.zip")
-        print("Please run the training script first.")
-        exit()
-
-    print(f"Loading Model from: {MODEL_PATH}")
+    # 경로를 다시 한번 확인해 주세요.
+    FINAL_MODEL_PATH = r"C:\Users\USER\Desktop\forest_fire\ppo_forest_fire_parallel_final.zip"
     
-    # 2. 모델 불러오기
-    loaded_model = PPO.load(MODEL_PATH)
-    
-    # 3. 테스트 환경 생성 (Render Mode: Human)
-    test_env = gym.make("ForestFireMLP-v22", render_mode="human")
-    
-    # 4. 테스트 루프 (5 에피소드)
-    for episode in range(1, 6):
-        obs, _ = test_env.reset()
-        done = False
-        total_reward = 0
-        
-        # 현재 불 개수 확인 (내부 변수 접근)
-        fire_locs = [
-            pos for pos in test_env.unwrapped.trees 
-            if isinstance(test_env.unwrapped.grid.get(*pos), minigrid_forest_env.BurningTree)
-        ]
-        print(f"\n[Episode {episode}] Start! Initial Fires: {len(fire_locs)}")
-        
-        while not done:
-            # 행동 예측 (Deterministic=True: 학습된 대로만 행동)
-            action, _ = loaded_model.predict(obs, deterministic=True)
-            
-            # 환경 진행
-            obs, reward, terminated, truncated, _ = test_env.step(action)
-            
-            # 렌더링 및 딜레이
-            test_env.render()
-            total_reward += reward
-            time.sleep(0.05) # 속도 조절
-
-            if terminated or truncated:
-                done = True
-                status = "Success (All Clear!)" if terminated else "Fail (Timeout)"
-                print(f"Result: {status} | Total Reward: {total_reward:.2f}")
-
-    test_env.close()
-    print("\nTest Finished.")
+    test_forest_fire(FINAL_MODEL_PATH, num_episodes=5)
