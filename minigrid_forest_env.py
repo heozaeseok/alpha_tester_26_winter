@@ -39,7 +39,7 @@ class ForestFireEnv(MiniGridEnv):
         self.wind_impact = 3.0      # 바람 방향과 사면향이 일치할 때의 최대 가중치
         # ------------------------------------------
 
-        self.df = pd.read_csv("subongsan_integrated_final.csv")
+        self.df = pd.read_csv(r"C:\Users\USER\Desktop\forest_fire\subongsan_integrated_final.csv")
         self.terrain_data = {}
         self.initial_tree_count = 0
         
@@ -127,6 +127,23 @@ class ForestFireEnv(MiniGridEnv):
         # 2. MiniGrid 기본 관측값(Dict) 대신, 우리가 정의한 9개짜리 배열 반환
         return self._get_obs(), {}
     
+    def _get_surrounding_healthy_trees(self, x, y):
+        count = 0
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0: continue
+                nx, ny = x + dx, y + dy
+                if 0 < nx <= self.grid_w and 0 < ny <= self.grid_h:
+                    if isinstance(self.grid.get(nx, ny), HealthyTree):
+                        count += 1
+        return count
+
+    def _get_danger_score(self, fx, fy):
+        obj = self.grid.get(fx, fy)
+        if isinstance(obj, BurningTree):
+            return obj.spread_prob * self._get_surrounding_healthy_trees(fx, fy)
+        return 0.0
+
     def step(self, action):
         self.step_count += 1
         reward = -0.1 
@@ -145,35 +162,63 @@ class ForestFireEnv(MiniGridEnv):
 
         curr_obj = self.grid.get(*self.agent_pos)
         if isinstance(curr_obj, BurningTree):
-            # 진압 보상: 확산 확률이 높은 셀일수록 더 큰 점수
-            reward += 5.0 + (curr_obj.spread_prob * 10.0)
+            # 진압 보상: (확산 확률 * 주변 나무 수) 비례하여 차단선 구축 시 고득점
+            danger_score = self._get_danger_score(self.agent_pos[0], self.agent_pos[1])
+            reward += 5.0 + (danger_score * 10.0)
+            
             self.grid.set(*self.agent_pos, Floor())
             self.fire_coords.discard(self.agent_pos)
             self.ammo -= 1
-            if self.ammo <= 0: # 탄약 소진 시 랜덤 리스폰
+            if self.ammo <= 0:
                 self.agent_pos = self._get_random_safe_pos()
                 self.ammo = self.ammo_limit
 
         spread_count = self._spread_fire()
-        reward -= (spread_count * 1.0) # 불이 번질 때마다 페널티
+        reward -= (spread_count * 1.0)
 
         terminated = len(self.fire_coords) == 0
         truncated = self.step_count >= self.max_steps
         
-        # 현재 살아있는 나무 수 확인
         current_trees = sum(1 for (tx, ty) in self.terrain_data if isinstance(self.grid.get(tx, ty), HealthyTree))
         
-        # 종료 조건: 나무의 절반 이상 소실
         if current_trees < (self.initial_tree_count * 0.5):
             terminated = True
             reward -= 100.0
         
-        # 성공 종료: 남은 나무 수만큼 점수 가산
         if terminated and len(self.fire_coords) == 0:
             reward += current_trees * 5.0
 
         return self._get_obs(), reward, terminated, truncated, {}
 
+    def _get_fire_distances(self):
+        if not self.fire_coords: return 0, 0
+        ax, ay = self.agent_pos
+        dists = [np.sqrt((fx-ax)**2 + (fy-ay)**2) for fx, fy in self.fire_coords]
+        
+        danger_list = [(self._get_danger_score(fx, fy), fx, fy) for fx, fy in self.fire_coords]
+        _, dfx, dfy = max(danger_list)
+        dist_danger = np.sqrt((dfx-ax)**2 + (dfy-ay)**2)
+        
+        return min(dists), dist_danger
+
+    def _get_obs(self):
+        ax, ay = self.agent_pos
+        if not self.fire_coords: return np.zeros(9, dtype=np.float32)
+
+        dists = [((fx-ax)**2 + (fy-ay)**2, fx, fy) for fx, fy in self.fire_coords]
+        _, cfx, cfy = min(dists)
+        
+        danger_list = [(self._get_danger_score(fx, fy), fx, fy) for fx, fy in self.fire_coords]
+        _, dfx, dfy = max(danger_list)
+
+        return np.array([
+            ax, ay, 
+            self.wind_obs[0], self.wind_obs[1],
+            self.ammo,
+            cfx - ax, cfy - ay,
+            dfx - ax, dfy - ay
+        ], dtype=np.float32)
+    
     def _spread_fire(self):
         new_fires = set()
         for fx, fy in list(self.fire_coords):
@@ -190,31 +235,4 @@ class ForestFireEnv(MiniGridEnv):
             self.fire_coords.add((nx, ny))
         return len(new_fires)
 
-    def _get_fire_distances(self):
-        if not self.fire_coords: return 0, 0
-        ax, ay = self.agent_pos
-        dists = [np.sqrt((fx-ax)**2 + (fy-ay)**2) for fx, fy in self.fire_coords]
-        
-        danger_list = [(self.grid.get(fx, fy).spread_prob, fx, fy) for fx, fy in self.fire_coords]
-        _, dfx, dfy = max(danger_list)
-        dist_danger = np.sqrt((dfx-ax)**2 + (dfy-ay)**2)
-        
-        return min(dists), dist_danger
 
-    def _get_obs(self):
-        ax, ay = self.agent_pos
-        if not self.fire_coords: return np.zeros(9, dtype=np.float32)
-
-        dists = [((fx-ax)**2 + (fy-ay)**2, fx, fy) for fx, fy in self.fire_coords]
-        _, cfx, cfy = min(dists)
-        
-        danger_list = [(self.grid.get(fx, fy).spread_prob, fx, fy) for fx, fy in self.fire_coords]
-        _, dfx, dfy = max(danger_list)
-
-        return np.array([
-            ax, ay, 
-            self.wind_obs[0], self.wind_obs[1],
-            self.ammo,
-            cfx - ax, cfy - ay,
-            dfx - ax, dfy - ay
-        ], dtype=np.float32)
