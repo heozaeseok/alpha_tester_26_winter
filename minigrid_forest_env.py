@@ -10,7 +10,8 @@ import random
 
 class HealthyTree(Box):
     def __init__(self, tree_type=1):
-        colors = {1: 'red', 2: 'green', 3: 'yellow', 4: 'grey'}
+        # [수정] 4번 타입의 색상을 grey에서 purple로 변경
+        colors = {1: 'red', 2: 'green', 3: 'yellow', 4: 'purple'}
         super().__init__(color=colors.get(tree_type, 'green'))
         self.tree_type = tree_type
     def can_overlap(self): return True
@@ -21,22 +22,26 @@ class BurningTree(Ball):
         self.spread_prob = prob
     def can_overlap(self): return True
 
+# [추가] 화재가 완전히 소실된 나무 클래스 (회색)
+class BurntTree(Box):
+    def __init__(self):
+        super().__init__(color='grey')
+    def can_overlap(self): return True
+
 class ForestFireEnv(MiniGridEnv):
     def __init__(self, render_mode="human"):
         # --- [환경 설정 모수 (Hyperparameters)] ---
         self.grid_w, self.grid_h = 50, 50
-        self.shift_y = 4            # 나무 위치를 아래로 내리는 오프셋
-        self.base_prob = 0.005      # 기본 확산 확률 (모든 확률 계산의 기초)
-        self.ammo_limit = 3         # 에이전트가 가진 소화탄 개수
-        self.max_steps = 1000       # 에피소드 최대 스텝
+        self.shift_y = 4            
+        self.base_prob = 0.005      # 기본 확산 확률
+        self.base_burnout_prob = 0.0005 # 기본 소실 확률
+        self.ammo_limit = 3         
+        self.max_steps = 1000       
+        self.depot_pos = (25, 18)   
         
-        # 수목 종류별 확산 가중치 (나무 타입에 따른 연소 속도 차이)
-        # 1:침엽수(빠름), 2:활엽수(느림), 3:혼효림(중간), 4:기타
         self.tree_weights = {0: 0.0, 1: 1.5, 2: 0.8, 3: 1.2, 4: 1.0}
-        
-        # 지형 가중치 계수
-        self.slope_norm = 45.0      # 경사도 영향력 조절 (기울기/45도 기준으로 가중치 부여)
-        self.wind_impact = 3.0      # 바람 방향과 사면향이 일치할 때의 최대 가중치
+        self.slope_norm = 45.0      
+        self.wind_impact = 3.0      
         # ------------------------------------------
 
         self.df = pd.read_csv(r"C:\Users\USER\Desktop\forest_fire\subongsan_integrated_final.csv")
@@ -45,7 +50,7 @@ class ForestFireEnv(MiniGridEnv):
         
         for _, row in self.df.iterrows():
             tx = int(row['col_index']) + 1
-            ty = int(row['row_index']) + 1 + self.shift_y # [수정] 4칸 아래로 이동
+            ty = int(row['row_index']) + 1 + self.shift_y 
             
             if 0 < tx <= self.grid_w and 0 < ty <= self.grid_h:
                 self.terrain_data[(tx, ty)] = {
@@ -68,6 +73,9 @@ class ForestFireEnv(MiniGridEnv):
     def _gen_grid(self, width, height):
         self.grid = Grid(width, height)
         self.grid.wall_rect(0, 0, width, height)
+        
+        self.grid.set(self.depot_pos[0], self.depot_pos[1], Floor(color='blue'))
+        
         self.fire_coords = set()
         self.ammo = self.ammo_limit
         
@@ -77,10 +85,9 @@ class ForestFireEnv(MiniGridEnv):
                 self.grid.set(tx, ty, HealthyTree(tree_type=data['tree_type']))
                 tree_positions.append((tx, ty))
 
-        self.agent_pos = self._get_random_safe_pos()
+        self.agent_pos = self.depot_pos
         self.agent_dir = 0
         
-        # 바람 설정 및 이진 관측값 매핑
         self.wind_mode = random.choice(['N', 'S', 'E', 'W'])
         wind_obs_map = {'N': (0,0), 'S': (1,0), 'E': (0,1), 'W': (1,1)}
         self.wind_obs = wind_obs_map[self.wind_mode]
@@ -92,39 +99,41 @@ class ForestFireEnv(MiniGridEnv):
                 self.fire_coords.add((fx, fy))
 
     def calculate_spread_prob(self, x, y):
-        """
-        각 셀의 확산 확률을 계산합니다.
-        영향 요소: 수목 종류(tree_weights), 경사도(slope), 바람-사면향(aspect)
-        """
         data = self.terrain_data.get((x, y), None)
         if not data or data['is_tree'] == 0: return 0.0
         
-        # 1. 수목 가중치: 불에 잘 타는 수종일수록 확률 증가
         tw = self.tree_weights.get(data['tree_type'], 1.0)
-        
-        # 2. 경사도 가중치: 가파른 경사일수록 불길이 위로 빠르게 치솟음
         sw = 1.0 + (data['slope'] / self.slope_norm)
         
-        # 3. 바람-사면향 가중치: 바람이 불어오는 방향과 경사면의 방향이 일치하면 산소 공급과 열 전달이 극대화됨
-        wind_deg = {'N': 0, 'S': 180, 'E': 90, 'W': 270}[self.wind_mode]
-        diff = abs(data['aspect'] - wind_deg)
-        angle_diff = min(diff, 360-diff)
-        # 차이가 0도에 가까울수록 self.wind_impact(2.0)에 가까운 값 생성
-        aw = self.wind_impact - (angle_diff / 180.0) 
+        if data['slope'] == 0 or data['aspect'] == -1:
+            aw = 1.0
+        else:
+            wind_deg = {'N': 0, 'S': 180, 'E': 90, 'W': 270}[self.wind_mode]
+            diff = abs(data['aspect'] - wind_deg)
+            angle_diff = min(diff, 360 - diff)
+            aw = 2.0 - 1.5 * (angle_diff / 180.0) 
         
         return self.base_prob * tw * sw * aw
 
-    def _get_random_safe_pos(self):
-        while True:
-            rx, ry = random.randint(1, self.grid_w), random.randint(1, self.grid_h)
-            if not isinstance(self.grid.get(rx, ry), (HealthyTree, BurningTree)):
-                return (rx, ry)
-            
-    def reset(self, seed=None, options=None):
-        # 1. 부모 클래스(MiniGridEnv)의 reset을 호출하여 그리드 생성
-        super().reset(seed=seed, options=options)
+    def calculate_burnout_prob(self, x, y):
+        data = self.terrain_data.get((x, y), None)
+        if not data or data['is_tree'] == 0: return 0.0
         
-        # 2. MiniGrid 기본 관측값(Dict) 대신, 우리가 정의한 9개짜리 배열 반환
+        tw = self.tree_weights.get(data['tree_type'], 1.0)
+        sw = 1.0 + (data['slope'] / self.slope_norm)
+        
+        if data['slope'] == 0 or data['aspect'] == -1:
+            aw = 1.0
+        else:
+            wind_deg = {'N': 0, 'S': 180, 'E': 90, 'W': 270}[self.wind_mode]
+            diff = abs(data['aspect'] - wind_deg)
+            angle_diff = min(diff, 360 - diff)
+            aw = 2.0 - 1.5 * (angle_diff / 180.0) 
+        
+        return self.base_burnout_prob * tw * sw * aw
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed, options=options)
         return self._get_obs(), {}
     
     def _get_surrounding_healthy_trees(self, x, y):
@@ -156,21 +165,24 @@ class ForestFireEnv(MiniGridEnv):
         if 0 < nx <= self.grid_w and 0 < ny <= self.grid_h:
             self.agent_pos = (nx, ny)
 
+        if self.agent_pos == self.depot_pos:
+            self.ammo = self.ammo_limit
+
         d_close_post, d_danger_post = self._get_fire_distances()
         if d_close_post < d_close_pre: reward += 0.01
         if d_danger_post < d_danger_pre: reward += 0.01
 
         curr_obj = self.grid.get(*self.agent_pos)
         if isinstance(curr_obj, BurningTree):
-            # 진압 보상: (확산 확률 * 주변 나무 수) 비례하여 차단선 구축 시 고득점
             danger_score = self._get_danger_score(self.agent_pos[0], self.agent_pos[1])
             reward += 5.0 + (danger_score * 10.0)
             
             self.grid.set(*self.agent_pos, Floor())
             self.fire_coords.discard(self.agent_pos)
             self.ammo -= 1
+            
             if self.ammo <= 0:
-                self.agent_pos = self._get_random_safe_pos()
+                self.agent_pos = self.depot_pos
                 self.ammo = self.ammo_limit
 
         spread_count = self._spread_fire()
@@ -221,7 +233,16 @@ class ForestFireEnv(MiniGridEnv):
     
     def _spread_fire(self):
         new_fires = set()
+        burnt_out_fires = set() # [추가] 소실된 화재 좌표 저장
+        
         for fx, fy in list(self.fire_coords):
+            # 1. 소실 체크 (일정 확률로 스스로 꺼지고 회색이 됨)
+            burnout_prob = self.calculate_burnout_prob(fx, fy)
+            if random.random() < burnout_prob:
+                burnt_out_fires.add((fx, fy))
+                continue # 소실된 셀은 주변으로 불을 퍼뜨리지 않음
+                
+            # 2. 불 확산 체크
             for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
                 nx, ny = fx + dx, fy + dy
                 if (nx, ny) in self.terrain_data and isinstance(self.grid.get(nx, ny), HealthyTree):
@@ -229,10 +250,15 @@ class ForestFireEnv(MiniGridEnv):
                     if random.random() < prob:
                         new_fires.add((nx, ny))
         
+        # [수정] 소실된 화재 처리 (회색으로 덮고 화재 좌표에서 제거)
+        for bx, by in burnt_out_fires:
+            self.grid.set(bx, by, BurntTree())
+            self.fire_coords.discard((bx, by))
+        
+        # 새로운 화재 처리
         for nx, ny in new_fires:
             p = self.calculate_spread_prob(nx, ny)
             self.grid.set(nx, ny, BurningTree(prob=p))
             self.fire_coords.add((nx, ny))
+            
         return len(new_fires)
-
-

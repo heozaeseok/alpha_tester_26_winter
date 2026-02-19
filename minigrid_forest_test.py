@@ -5,14 +5,14 @@ from minigrid_forest_env import ForestFireEnv
 
 # 테스트 환경 파라미터
 NUM_EPISODES = 5      # 변경 가능한 에피소드 수
-DELAY_SECONDS = 0.01   # 시각적 확인을 위한 지연 시간
+DELAY_SECONDS = 0.005   # 시각적 확인을 위한 지연 시간
 
 def main():
     # 1. 테스트를 위해 렌더링 모드를 켜서 환경 생성
     env = ForestFireEnv(render_mode="human")
     env.unwrapped.highlight = False 
     # 2. 학습 완료된 모델 불러오기
-    model = PPO.load(r"C:\Users\USER\Desktop\forest_fire\ppo_forest_fire_v1.zip")
+    model = PPO.load(r"C:\Users\USER\Desktop\forest_fire\ppo_forest_fire_v2.zip")
     print(f"모델 로드 완료. 총 {NUM_EPISODES}번의 에피소드 테스트를 시작합니다.")
 
     for episode in range(NUM_EPISODES):
