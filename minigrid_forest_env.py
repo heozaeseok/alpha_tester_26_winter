@@ -26,7 +26,7 @@ class ForestFireEnv(MiniGridEnv):
         # --- [환경 설정 모수 (Hyperparameters)] ---
         self.grid_w, self.grid_h = 50, 50
         self.shift_y = 4            # 나무 위치를 아래로 내리는 오프셋
-        self.base_prob = 0.01       # 기본 확산 확률 (모든 확률 계산의 기초)
+        self.base_prob = 0.005      # 기본 확산 확률 (모든 확률 계산의 기초)
         self.ammo_limit = 3         # 에이전트가 가진 소화탄 개수
         self.max_steps = 1000       # 에피소드 최대 스텝
         
@@ -86,7 +86,7 @@ class ForestFireEnv(MiniGridEnv):
         self.wind_obs = wind_obs_map[self.wind_mode]
         
         if len(tree_positions) >= 2:
-            for fx, fy in random.sample(tree_positions, 2):
+            for fx, fy in random.sample(tree_positions, 1):
                 p = self.calculate_spread_prob(fx, fy)
                 self.grid.set(fx, fy, BurningTree(prob=p))
                 self.fire_coords.add((fx, fy))
@@ -186,7 +186,7 @@ class ForestFireEnv(MiniGridEnv):
             reward -= 100.0
         
         if terminated and len(self.fire_coords) == 0:
-            reward += current_trees * 5.0
+            reward += current_trees * 10.0
 
         return self._get_obs(), reward, terminated, truncated, {}
 

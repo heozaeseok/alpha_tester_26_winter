@@ -1,68 +1,45 @@
+import time
 import gymnasium as gym
 from stable_baselines3 import PPO
-from gymnasium.envs.registration import register
-import minigrid_forest_env
-import time
-import os
-import numpy as np
+from minigrid_forest_env import ForestFireEnv
 
-# 1. 환경 등록 (절대 생략하면 안 됩니다)
-try:
-    register(
-        id="ForestFireMLP-v22",
-        entry_point="minigrid_forest_env:ForestFireEnv",
-    )
-except:
-    # 이미 등록된 경우 에러 방지
-    pass
+# 테스트 환경 파라미터
+NUM_EPISODES = 5      # 변경 가능한 에피소드 수
+DELAY_SECONDS = 0.01   # 시각적 확인을 위한 지연 시간
 
-def test_forest_fire(model_path, num_episodes=5):
-    # 2. 환경 생성 (agent_view_size를 맵 전체를 덮을 만큼 크게 설정)
-    env = gym.make("ForestFireMLP-v22", render_mode="human")
-    
-    # [핵심] 하얀 박스(하이라이트) 기능을 끕니다.
+def main():
+    # 1. 테스트를 위해 렌더링 모드를 켜서 환경 생성
+    env = ForestFireEnv(render_mode="human")
     env.unwrapped.highlight = False 
+    # 2. 학습 완료된 모델 불러오기
+    model = PPO.load(r"C:\Users\USER\Desktop\forest_fire\ppo_forest_fire_v1.zip")
+    print(f"모델 로드 완료. 총 {NUM_EPISODES}번의 에피소드 테스트를 시작합니다.")
 
-    # 3. 모델 로드
-    if not os.path.exists(model_path):
-        print(f"모델 파일을 찾을 수 없습니다: {model_path}")
-        return
-        
-    model = PPO.load(model_path)
-    print("모델 로드 완료.")
-
-    for episode in range(num_episodes):
+    for episode in range(NUM_EPISODES):
         obs, info = env.reset()
-        terminated = False
-        truncated = False
-        step = 0
-
-        print(f"--- 에피소드 {episode + 1} 시작 ---")
-
-        while not (terminated or truncated):
-            # 하얀 박스 제거 상태 유지
-            env.unwrapped.highlight = False 
+        done = False
+        step_count = 0
+        total_reward = 0.0
+        
+        while not done:
+            time.sleep(DELAY_SECONDS)
             
-            # 행동 예측
-            action, _states = model.predict(obs, deterministic=True)
-            if isinstance(action, np.ndarray): 
-                action = action.item()
+            action, _states = model.predict(obs, deterministic=False)
+            action = int(action)
             
-            # 한 스텝 진행
             obs, reward, terminated, truncated, info = env.step(action)
             
-            step += 1
-            # 렌더링 속도 (0.001초 대기)
-            time.sleep(0.001) 
-            env.render()
-
-        print(f"에피소드 종료 | 총 스텝: {step}")
-        time.sleep(1)
+            # [추가] 명시적으로 렌더링을 호출하여 화면을 갱신합니다.
+            env.render() 
+            
+            total_reward += reward
+            step_count += 1
+            done = terminated or truncated
+            
+        print(f"에피소드 {episode + 1} 종료 | 스텝 수: {step_count} | 총 보상: {total_reward:.2f}")
 
     env.close()
+    print("모든 테스트가 완료되었습니다.")
 
 if __name__ == "__main__":
-    # 경로를 다시 한번 확인해 주세요.
-    FINAL_MODEL_PATH = r"C:\Users\USER\Desktop\forest_fire\ppo_forest_fire_parallel_final.zip"
-    
-    test_forest_fire(FINAL_MODEL_PATH, num_episodes=5)
+    main()
