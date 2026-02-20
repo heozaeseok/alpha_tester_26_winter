@@ -33,8 +33,8 @@ class ForestFireEnv(MiniGridEnv):
         # --- [환경 설정 모수 (Hyperparameters)] ---
         self.grid_w, self.grid_h = 50, 50
         self.shift_y = 4            
-        self.base_prob = 0.005      # 기본 확산 확률
-        self.base_burnout_prob = 0.0005 # 기본 소실 확률
+        self.base_prob = 0.01      # 기본 확산 확률
+        self.base_burnout_prob = 0.001 # 기본 소실 확률
         self.ammo_limit = 3         
         self.max_steps = 1000       
         self.depot_pos = (25, 18)   
