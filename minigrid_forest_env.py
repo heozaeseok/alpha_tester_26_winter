@@ -158,7 +158,7 @@ class ForestFireEnv(MiniGridEnv):
 
     def step(self, action):
         self.step_count += 1
-        reward = -0.1 
+        reward = -0.5 
         
         d_close_pre, d_danger_pre = self._get_fire_distances()
 
@@ -173,14 +173,14 @@ class ForestFireEnv(MiniGridEnv):
 
         d_close_post, d_danger_post = self._get_fire_distances()
         if d_close_post < d_close_pre: reward += 0.01
-        if d_danger_post < d_danger_pre: reward += 0.01
+        if d_danger_post < d_danger_pre: reward += 0.05
 
         curr_obj = self.grid.get(*self.agent_pos)
         if isinstance(curr_obj, BurningTree):
             # [수정] 진압 보상: (5 + 확산확률 * 10) * 주변 건강한 나무 수
             spread_prob = curr_obj.spread_prob
             surrounding_trees = self._get_surrounding_healthy_trees(self.agent_pos[0], self.agent_pos[1])
-            reward += (5.0 + spread_prob * 10.0) * surrounding_trees
+            reward += (10.0 + spread_prob * 100.0) * surrounding_trees
             
             self.grid.set(*self.agent_pos, Floor())
             self.fire_coords.discard(self.agent_pos)
