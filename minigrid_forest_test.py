@@ -12,7 +12,7 @@ def main():
     env = ForestFireEnv(render_mode="human")
     env.unwrapped.highlight = False 
     # 2. 학습 완료된 모델 불러오기
-    model = PPO.load(r"C:\Users\USER\Desktop\forest_fire\ppo_forest_fire_v5.zip")
+    model = PPO.load(r"C:\Users\USER\Desktop\forest_fire\ppo_forest_fire_v6.zip")
     print(f"모델 로드 완료. 총 {NUM_EPISODES}번의 에피소드 테스트를 시작합니다.")
 
     for episode in range(NUM_EPISODES):
