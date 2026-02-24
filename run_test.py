@@ -43,7 +43,7 @@ def run_random_agent(num_episodes=3):
             
             # 시각화 갱신 및 속도 조절
             # 불이 번지는 것을 천천히 보려면 시간을 늘리세요 (예: 0.1)
-            time.sleep(0.05) 
+            time.sleep(0.005) 
             env.render()
 
         print(f"Episode Finished | Steps: {step} | Total Reward: {total_reward:.2f}")
